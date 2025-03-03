@@ -33,6 +33,9 @@
 
 #ifdef WIN32
 #include "win32.h"
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 #else
 #include <sys/socket.h>
 #include <unistd.h>
@@ -57,6 +60,7 @@
  * include <wincrypt.h>, but some other Windows headers do.)
  */
 #include "common/openssl.h"
+#include <openssl/ssl.h>
 #include <openssl/conf.h>
 #ifdef USE_SSL_ENGINE
 #include <openssl/engine.h>
@@ -684,6 +688,75 @@ pgtls_verify_peer_name_matches_certificate_guts(PGconn *conn,
 /* See pqcomm.h comments on OpenSSL implementation of ALPN (RFC 7301) */
 static unsigned char alpn_protos[] = PG_ALPN_PROTOCOL_VECTOR;
 
+#ifdef HAVE_SSL_CTX_SET_KEYLOG_CALLBACK
+/*
+ * SSL Key Logging callback
+ *
+ * This callback lets the user store all key material to a file for debugging
+ * purposes.  The file will be written using the NSS keylog format.  LibreSSL
+ * 3.5 introduce stub function to set the callback for OpenSSL compatibility,
+ * but the callback is never invoked.
+ */
+ static void
+SSL_CTX_keylog_cb(const SSL *ssl, const char *line)
+{
+    PGconn *conn = SSL_get_app_data(ssl);
+
+    if (conn == NULL || conn->sslkeylogfile == NULL)
+        return;
+
+#ifdef _WIN32
+    // Use Windows-specific file creation with explicit security attributes
+    HANDLE hFile = CreateFile(
+        conn->sslkeylogfile,
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        char error_message[256];
+        FormatMessage(
+            FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            error,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            error_message,
+            sizeof(error_message),
+            NULL
+        );
+        libpq_append_conn_error(conn, "Could not create SSL key log file: %s", error_message);
+        return;
+    }
+
+    DWORD bytesWritten;
+    size_t lineLen = strlen(line);
+    WriteFile(hFile, line, (DWORD)lineLen, &bytesWritten, NULL);
+    WriteFile(hFile, "\n", 1, &bytesWritten, NULL);
+    CloseHandle(hFile);
+#else
+    // Existing POSIX implementation
+    mode_t old_umask = umask(077);
+    int fd = open(conn->sslkeylogfile, O_WRONLY | O_APPEND | O_CREAT, 0600);
+    umask(old_umask);
+
+    if (fd == -1) {
+        libpq_append_conn_error(conn, "could not open ssl key log file %s: %s", 
+                                 conn->sslkeylogfile, pg_strerror(errno));
+        return;
+    }
+
+    write(fd, line, strlen(line));
+    write(fd, "\n", 1);
+    close(fd);
+#endif
+}
+#endif
+
 /*
  *	Create per-connection SSL object, and load the client certificate,
  *	private key, and trusted CA certs.
@@ -999,6 +1072,11 @@ initialize_SSL(PGconn *conn)
 		return -1;
 	}
 	conn->ssl_in_use = true;
+
+#ifdef HAVE_SSL_CTX_SET_KEYLOG_CALLBACK
+	if (conn->sslkeylogfile && strlen(conn->sslkeylogfile) > 0)
+		SSL_CTX_set_keylog_callback(SSL_context, SSL_CTX_keylog_cb);
+#endif
 
 	/*
 	 * SSL contexts are reference counted by OpenSSL. We can free it as soon
