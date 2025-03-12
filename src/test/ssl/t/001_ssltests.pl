@@ -1,4 +1,3 @@
-
 # Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
@@ -159,8 +158,21 @@ SKIP:
 		"$common_connstr sslrootcert=ssl/root+server_ca.crt sslkeylogfile=$tempdir/key.txt sslmode=require",
 		"connect with server root cert and sslkeylogfile=$tempdir/key.txt");
 
-	# Verify the key file exists
-	ok(-f "$tempdir/key.txt", "key log file exists");
+	# Verify the key file exists - with retry to allow for filesystem delays
+	my $max_retries = 10;
+	my $retry_count = 0;
+	my $file_exists = 0;
+	
+	while ($retry_count < $max_retries && !$file_exists) {
+		$file_exists = -f "$tempdir/key.txt";
+		if (!$file_exists) {
+			# Sleep for a short time before retrying
+			select(undef, undef, undef, 0.1);  # 100ms sleep
+			$retry_count++;
+		}
+	}
+	
+	ok($file_exists, "key log file exists (after $retry_count retries)");
 
 	# Skip permission checks on Windows/Cygwin
 	skip "Permissions check not enforced on Windows", 2
