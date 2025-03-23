@@ -211,6 +211,31 @@ select $1::int as col \bind 1 \g \bind 2 \g
    2
 (1 row)
 
+-- Test parse, sync, bind in different implicit transactions
+BEGIN;
+
+-- Parse an unnamed statement
+SELECT 1 \parse ''
+
+-- Commit the current transaction to ensure we're in a different transaction
+COMMIT;
+
+-- Now bind and execute the unnamed statement in a new transaction
+-- This should fail because the prepared statement is cleaned up after COMMIT
+\bind_named '' \g
+ERROR:  prepared statement "" does not exist
+
+-- Parse a new unnamed statement
+SELECT 2 \parse ''
+
+-- Bind and execute to see which statement is active
+-- This should work because we just parsed it
+\bind_named '' \g
+ ?column? 
+----------
+        2
+(1 row)
+
 -- errors
 -- parse error
 SELECT foo \bind \g

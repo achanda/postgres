@@ -1294,6 +1294,7 @@ exec_simple_query(const char *query_string)
 			 * implicit transaction block, we must close that out first.
 			 */
 			if (use_implicit_block)
+				drop_unnamed_stmt();
 				EndImplicitTransactionBlock();
 			finish_xact_command();
 		}

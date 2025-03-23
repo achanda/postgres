@@ -85,6 +85,26 @@ select $1::int as col \bind 'foo' \bind 2 \g
 -- Multiple \g calls mean multiple executions
 select $1::int as col \bind 1 \g \bind 2 \g
 
+-- Test parse, sync, bind in different implicit transactions
+BEGIN;
+
+-- Parse an unnamed statement
+SELECT 1 \parse ''
+
+-- Commit the current transaction to ensure we're in a different transaction
+COMMIT;
+
+-- Now bind and execute the unnamed statement in a new transaction
+-- This should fail because the prepared statement is cleaned up after COMMIT
+\bind_named '' \g
+
+-- Parse a new unnamed statement
+SELECT 2 \parse ''
+
+-- Bind and execute to see which statement is active
+-- This should work because we just parsed it
+\bind_named '' \g
+
 -- errors
 -- parse error
 SELECT foo \bind \g
