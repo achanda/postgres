@@ -1858,3 +1858,144 @@ array_reverse(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
+
+/* Define the context structure for array_sort_compare */
+typedef struct ArraySortContext
+{
+	FmgrInfo	cmpfunc;	/* comparison function */
+	Oid			collation;	/* collation to use */
+} ArraySortContext;
+
+/*
+ * array_sort_compare
+ *		qsort_arg comparator for sorting array elements
+ */
+static int
+array_sort_compare(const void *a, const void *b, void *arg)
+{
+	Datum		da = *((const Datum *) a);
+	Datum		db = *((const Datum *) b);
+	ArraySortContext *cxt = (ArraySortContext *) arg;
+	int32		compare;
+
+	compare = DatumGetInt32(FunctionCall2Coll(&cxt->cmpfunc,
+											  cxt->collation,
+											  da, db));
+	return compare;
+}
+
+/*
+ * array_sort_n
+ *		Return a copy of array with sorted items.
+ *
+ * NOTE: it would be cleaner to look up the elmlen/elmbval/elmalign info
+ * from the system catalogs, given only the elmtyp. However, the caller is
+ * in a better position to cache this info across multiple calls.
+ */
+static ArrayType *
+array_sort_n(ArrayType *array, Oid elmtyp, TypeCacheEntry *typentry, Oid collation)
+{
+	ArrayType  *result;
+	int			ndim,
+			   *dims,
+			   *lbs,
+				nelm,
+				nitem,
+				rdims[MAXDIM],
+				rlbs[MAXDIM];
+	int16		elmlen;
+	bool		elmbyval;
+	char		elmalign;
+	Datum	   *elms;
+	bool	   *nuls;
+	ArraySortContext cxt;
+
+	ndim = ARR_NDIM(array);
+	dims = ARR_DIMS(array);
+	lbs = ARR_LBOUND(array);
+
+	elmlen = typentry->typlen;
+	elmbyval = typentry->typbyval;
+	elmalign = typentry->typalign;
+
+	deconstruct_array(array, elmtyp, elmlen, elmbyval, elmalign,
+					  &elms, &nuls, &nelm);
+
+	nitem = dims[0];			/* total number of items */
+	nelm /= nitem;			/* number of elements per item */
+
+	/* Sort the array */
+	if (nitem > 1)
+	{
+		/* Set up comparison function */
+		Oid			cmpfunc;
+
+		cmpfunc = typentry->btree_opc ? typentry->btree_opc_finfo[BTORDER_PROC].fn_oid : InvalidOid;
+		if (!OidIsValid(cmpfunc))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify an ordering operator for type %s",
+							format_type_be(elmtyp))));
+
+		/* Initialize context for array_sort_compare */
+		cxt.collation = collation;
+		fmgr_info(cmpfunc, &cxt.cmpfunc);
+
+		/* Sort items (each item is an array of nelm elements) */
+		qsort_arg(elms, nitem, nelm * sizeof(Datum),
+				  array_sort_compare, &cxt);
+
+		/* Also sort the nulls array to match */
+		if (nuls)
+			qsort_arg(nuls, nitem, nelm * sizeof(bool),
+					  array_sort_compare, &cxt);
+	}
+
+	/* Set up dimensions of the result */
+	memcpy(rdims, dims, ndim * sizeof(int));
+	memcpy(rlbs, lbs, ndim * sizeof(int));
+	rdims[0] = nitem;
+
+	result = construct_md_array(elms, nuls, ndim, rdims, rlbs,
+								elmtyp, elmlen, elmbyval, elmalign);
+
+	pfree(elms);
+	pfree(nuls);
+
+	return result;
+}
+
+/*
+ * array_sort
+ *
+ * Returns an array with the same dimensions as the input array, with its
+ * first-dimension elements in sorted order.
+ */
+Datum
+array_sort(PG_FUNCTION_ARGS)
+{
+	ArrayType  *array = PG_GETARG_ARRAYTYPE_P(0);
+	ArrayType  *result;
+	Oid			elmtyp;
+	TypeCacheEntry *typentry;
+	Oid			collation = PG_GET_COLLATION();
+
+	/*
+	 * There is no point in sorting empty arrays or arrays with less than
+	 * two items.
+	 */
+	if (ARR_NDIM(array) < 1 || ARR_DIMS(array)[0] < 2)
+		PG_RETURN_ARRAYTYPE_P(array);
+
+	elmtyp = ARR_ELEMTYPE(array);
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+	if (typentry == NULL || typentry->type_id != elmtyp)
+	{
+		typentry = lookup_type_cache(elmtyp, TYPECACHE_BTREE_OPFAMILY);
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	result = array_sort_n(array, elmtyp, typentry, collation);
+
+	PG_RETURN_ARRAYTYPE_P(result);
+}

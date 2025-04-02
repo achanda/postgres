@@ -289,6 +289,14 @@ SELECT array_position(ARRAY[5,3,4,2,1], 4);
 SELECT array_position(ARRAY[[1,2],[3,4]], 3);
 SELECT array_position(ARRAY['sun','mon','tue','wed','thu','fri','sat'], 'mon');
 SELECT array_position(ARRAY['sun','mon','tue','wed','thu','fri','sat'], 'sat');
+
+-- Test array_sort
+SELECT array_sort(ARRAY[3,2,1]) AS "{1,2,3}";
+SELECT array_sort(ARRAY[3,NULL,1]) AS "{1,3,NULL}";
+SELECT array_sort(ARRAY['banana','apple','orange']) AS "{apple,banana,orange}";
+SELECT array_sort(ARRAY[5.5,1.1,3.3]) AS "{1.1,3.3,5.5}";
+SELECT array_sort(ARRAY[]) AS "{}";
+SELECT array_sort(ARRAY[[1,2],[3,0]]) AS "{{3,0},{1,2}}";
 SELECT array_position(ARRAY['sun','mon','tue','wed','thu','fri','sat'], NULL);
 SELECT array_position(ARRAY['sun','mon','tue','wed','thu',NULL,'fri','sat'], NULL);
 SELECT array_position(ARRAY['sun','mon','tue','wed','thu',NULL,'fri','sat'], 'sat');
