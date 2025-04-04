@@ -410,6 +410,8 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
 	/* If we have no other source of client_encoding, use server encoding */
 	SetConfigOption("client_encoding", GetDatabaseEncodingName(),
 					PGC_BACKEND, PGC_S_DYNAMIC_DEFAULT);
+	/* Set the current_database GUC to the current database name */
+	SetConfigOption("current_database", name, PGC_INTERNAL, PGC_S_DYNAMIC_DEFAULT);
 
 	/* assign locale variables */
 	datum = SysCacheGetAttrNotNull(DATABASEOID, tup, Anum_pg_database_datcollate);

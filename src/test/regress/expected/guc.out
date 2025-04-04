@@ -913,3 +913,40 @@ SELECT name FROM tab_settings_flags
 (0 rows)
 
 DROP TABLE tab_settings_flags;
+-- Test current_database GUC parameter
+SHOW current_database;
+ current_database 
+------------------
+ regression
+(1 row)
+
+SELECT current_database();
+ current_database 
+------------------
+ regression
+(1 row)
+
+SELECT current_setting('current_database') = current_database();
+ ?column? 
+----------
+ t
+(1 row)
+
+-- Test that current_database GUC updates when changing databases
+-- Create a test database
+CREATE DATABASE db_guc_test;
+\c db_guc_test
+SHOW current_database;
+ current_database 
+------------------
+ db_guc_test
+(1 row)
+
+SELECT current_setting('current_database') = current_database();
+ ?column? 
+----------
+ t
+(1 row)
+
+\c regression
+DROP DATABASE db_guc_test;

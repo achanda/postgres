@@ -368,3 +368,17 @@ SELECT name FROM tab_settings_flags
   WHERE no_reset AND NOT no_reset_all
   ORDER BY 1;
 DROP TABLE tab_settings_flags;
+
+-- Test current_database GUC parameter
+SHOW current_database;
+SELECT current_database();
+SELECT current_setting('current_database') = current_database();
+
+-- Test that current_database GUC updates when changing databases
+-- Create a test database
+CREATE DATABASE db_guc_test;
+\c db_guc_test
+SHOW current_database;
+SELECT current_setting('current_database') = current_database();
+\c regression
+DROP DATABASE db_guc_test;

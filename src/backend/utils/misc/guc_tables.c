@@ -578,6 +578,7 @@ static double phony_random_seed;
 static char *client_encoding_string;
 static char *datestyle_string;
 static char *server_encoding_string;
+static char *current_database_string;
 static char *server_version_string;
 static int	server_version_num;
 static char *debug_io_direct_string;
@@ -4970,6 +4971,18 @@ struct config_string ConfigureNamesString[] =
 		&log_connections_string,
 		"",
 		check_log_connections, assign_log_connections, NULL
+	},
+
+	{
+		/* Can't be set in postgresql.conf */
+		{"current_database", PGC_INTERNAL, PRESET_OPTIONS,
+			gettext_noop("Shows the current database name."),
+			NULL,
+			GUC_IS_NAME | GUC_REPORT | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
+		},
+		&current_database_string,
+		NULL,
+		NULL, NULL, NULL
 	},
 
 
