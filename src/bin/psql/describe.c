@@ -1519,20 +1519,6 @@ describeTableDetails(const char *pattern, bool verbose, bool showSystem)
 	if (!res)
 		return false;
 
-	if (PQntuples(res) == 0)
-	{
-		if (!pset.quiet)
-		{
-			if (pattern)
-				pg_log_error("Did not find any relation named \"%s\".",
-							 pattern);
-			else
-				pg_log_error("Did not find any relations.");
-		}
-		PQclear(res);
-		return false;
-	}
-
 	for (i = 0; i < PQntuples(res); i++)
 	{
 		const char *oid;
@@ -1718,14 +1704,6 @@ describeOneTableDetails(const char *schemaname,
 	res = PSQLexec(buf.data);
 	if (!res)
 		goto error_return;
-
-	/* Did we get anything? */
-	if (PQntuples(res) == 0)
-	{
-		if (!pset.quiet)
-			pg_log_error("Did not find any relation with OID %s.", oid);
-		goto error_return;
-	}
 
 	tableinfo.checks = atoi(PQgetvalue(res, 0, 0));
 	tableinfo.relkind = *(PQgetvalue(res, 0, 1));
@@ -3762,6 +3740,7 @@ describeRoles(const char *pattern, bool verbose, bool showSystem)
 		return false;
 
 	nrows = PQntuples(res);
+	
 	attr = pg_malloc0((nrows + 1) * sizeof(*attr));
 
 	printTableInit(&cont, &myopt, _("List of roles"), ncols, nrows);
@@ -5403,20 +5382,6 @@ listTSParsersVerbose(const char *pattern)
 	if (!res)
 		return false;
 
-	if (PQntuples(res) == 0)
-	{
-		if (!pset.quiet)
-		{
-			if (pattern)
-				pg_log_error("Did not find any text search parser named \"%s\".",
-							 pattern);
-			else
-				pg_log_error("Did not find any text search parsers.");
-		}
-		PQclear(res);
-		return false;
-	}
-
 	for (i = 0; i < PQntuples(res); i++)
 	{
 		const char *oid;
@@ -5780,20 +5745,6 @@ listTSConfigsVerbose(const char *pattern)
 	termPQExpBuffer(&buf);
 	if (!res)
 		return false;
-
-	if (PQntuples(res) == 0)
-	{
-		if (!pset.quiet)
-		{
-			if (pattern)
-				pg_log_error("Did not find any text search configuration named \"%s\".",
-							 pattern);
-			else
-				pg_log_error("Did not find any text search configurations.");
-		}
-		PQclear(res);
-		return false;
-	}
 
 	for (i = 0; i < PQntuples(res); i++)
 	{
@@ -6256,20 +6207,6 @@ listExtensionContents(const char *pattern)
 	if (!res)
 		return false;
 
-	if (PQntuples(res) == 0)
-	{
-		if (!pset.quiet)
-		{
-			if (pattern)
-				pg_log_error("Did not find any extension named \"%s\".",
-							 pattern);
-			else
-				pg_log_error("Did not find any extensions.");
-		}
-		PQclear(res);
-		return false;
-	}
-
 	for (i = 0; i < PQntuples(res); i++)
 	{
 		const char *extname;
@@ -6600,22 +6537,6 @@ describePublications(const char *pattern)
 	if (!res)
 	{
 		termPQExpBuffer(&buf);
-		return false;
-	}
-
-	if (PQntuples(res) == 0)
-	{
-		if (!pset.quiet)
-		{
-			if (pattern)
-				pg_log_error("Did not find any publication named \"%s\".",
-							 pattern);
-			else
-				pg_log_error("Did not find any publications.");
-		}
-
-		termPQExpBuffer(&buf);
-		PQclear(res);
 		return false;
 	}
 
