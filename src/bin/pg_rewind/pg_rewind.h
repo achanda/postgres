@@ -14,6 +14,7 @@
 #include "access/timeline.h"
 #include "common/logging.h"
 #include "common/file_utils.h"
+#include "filemap.h"
 
 /* Configuration options */
 extern char *datadir_target;
@@ -45,6 +46,7 @@ extern XLogRecPtr readOneRecord(const char *datadir, XLogRecPtr ptr,
 
 /* in pg_rewind.c */
 extern void progress_report(bool finished);
+extern file_action_t decide_wal_file_action(const char *fname);
 
 /* in timeline.c */
 extern TimeLineHistoryEntry *rewind_parseTimeLineHistory(char *buffer,
