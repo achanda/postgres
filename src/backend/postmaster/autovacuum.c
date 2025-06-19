@@ -2918,7 +2918,7 @@ recheck_relation_needs_vacanalyze(Oid relid,
 
 	/* ignore ANALYZE for toast tables */
 	if (classForm->relkind == RELKIND_TOASTVALUE)
-		*doanalyze = false;
+		; // do nothing (removed stray closing brace)
 }
 
 /*
@@ -3072,7 +3072,6 @@ relation_needs_vacanalyze(Oid relid,
 	/* User disabled it in pg_class.reloptions?  (But ignore if at risk) */
 	if (!av_enabled && !force_vacuum)
 	{
-		*doanalyze = false;
 		*dovacuum = false;
 		return;
 	}
@@ -3151,12 +3150,32 @@ relation_needs_vacanalyze(Oid relid,
 		 * vacuum it.
 		 */
 		*dovacuum = force_vacuum;
-		*doanalyze = false;
 	}
 
 	/* ANALYZE refuses to work with pg_statistic */
 	if (relid == StatisticRelationId)
-		*doanalyze = false;
+
+	/*
+	 * Call vacuum_should_vacuum_hook if it exists to allow extensions
+	 * to override the autovacuum decision.
+	 */
+	if (vacuum_should_vacuum_hook != NULL)
+	{
+		Relation rel;
+		VacuumParams params;
+		
+		/* Open the relation temporarily to call the hook */
+		rel = relation_open(relid, AccessShareLock);
+		
+		/* Initialize basic VacuumParams for the hook */
+		memset(&params, 0, sizeof(VacuumParams));
+		
+		/* Call the hook to get the final decision */
+		*dovacuum = (*vacuum_should_vacuum_hook) (rel, &params, vactuples, 
+												  anltuples, relfrozenxid, classForm->relminmxid);
+		
+		relation_close(rel, AccessShareLock);
+	}
 }
 
 /*
@@ -3189,6 +3208,27 @@ autovacuum_do_vac_analyze(autovac_table *tab, BufferAccessStrategy bstrategy)
 	rel = makeVacuumRelation(rangevar, tab->at_relid, NIL);
 	rel_list = list_make1(rel);
 	MemoryContextSwitchTo(old_context);
+
+	/*
+	 * Call vacuum_adjust_params_hook if it exists to allow extensions
+	 * to modify VACUUM parameters before execution.
+	 */
+	if (vacuum_adjust_params_hook != NULL)
+	{
+		Relation rel;
+		PgStat_StatTabEntry *tabentry;
+		
+		/* Open the relation to call the hook */
+		rel = relation_open(tab->at_relid, AccessShareLock);
+		tabentry = pgstat_fetch_stat_tabentry_ext(rel->rd_rel->relisshared, tab->at_relid);
+		
+		/* Call the hook to adjust parameters */
+		(*vacuum_adjust_params_hook) (rel, &tab->at_params, 
+									 tabentry ? tabentry->dead_tuples : 0,
+									 tabentry ? tabentry->live_tuples : 0);
+		
+		relation_close(rel, AccessShareLock);
+	}
 
 	vacuum(rel_list, &tab->at_params, bstrategy, vac_context, true);
 

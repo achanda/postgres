@@ -1,0 +1,67 @@
+--- a/src/backend/postmaster/autovacuum.c
++++ b/src/backend/postmaster/autovacuum.c
+@@ -62,6 +62,7 @@
+ #include "utils/snapmgr.h"
+ #include "utils/syscache.h"
+ #include "utils/timeout.h"
++#include "vacuum_frequency.h"
+ #include "utils/timestamp.h"
+ 
+ /*
+@@ -3140,6 +3141,25 @@ relation_needs_vacanalyze(Oid relid,
+ 		*doanalyze = false;
+ 	}
+ 
++	/*
++	 * Call vacuum_should_vacuum_hook if it exists to allow extensions
++	 * to override the autovacuum decision.
++	 */
++	if (vacuum_should_vacuum_hook != NULL)
++	{
++		Relation rel;
++		VacuumParams params;
++		
++		/* Open the relation temporarily to call the hook */
++		rel = relation_open(relid, AccessShareLock);
++		
++		/* Initialize basic VacuumParams for the hook */
++		memset(&params, 0, sizeof(VacuumParams));
++		
++		/* Call the hook to get the final decision */
++		*dovacuum = (*vacuum_should_vacuum_hook) (rel, &params, vactuples, 
++												  anltuples, relfrozenxid, relminmxid);
++		
++		relation_close(rel, AccessShareLock);
++	}
++
+ 	/* ANALYZE refuses to work with pg_statistic */
+ 	if (relid == StatisticRelationId)
+ 		*doanalyze = false;
+@@ -3170,6 +3190,25 @@ autovacuum_do_vac_analyze(autovac_table *tab, BufferAccessStrategy bstrategy)
+ 	rel_list = list_make1(rel);
+ 	MemoryContextSwitchTo(old_context);
+ 
++	/*
++	 * Call vacuum_adjust_params_hook if it exists to allow extensions
++	 * to modify VACUUM parameters before execution.
++	 */
++	if (vacuum_adjust_params_hook != NULL)
++	{
++		Relation rel;
++		PgStat_StatTabEntry *tabentry;
++		
++		/* Open the relation to call the hook */
++		rel = relation_open(tab->at_relid, AccessShareLock);
++		tabentry = pgstat_fetch_stat_tabentry_ext(rel->rd_rel->relisshared, tab->at_relid);
++		
++		/* Call the hook to adjust parameters */
++		(*vacuum_adjust_params_hook) (rel, &tab->at_params, 
++									 tabentry ? tabentry->n_dead_tup : 0,
++									 tabentry ? tabentry->n_live_tup : 0);
++		
++		relation_close(rel, AccessShareLock);
++	}
++
+ 	vacuum(rel_list, &tab->at_params, bstrategy, vac_context, true);
+ 
+ 	MemoryContextDelete(vac_context);

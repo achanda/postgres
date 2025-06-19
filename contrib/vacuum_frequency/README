@@ -1,0 +1,176 @@
+VACUUM Frequency Extension
+==========================
+
+This extension provides C-level hooks for controlling VACUUM frequency in PostgreSQL.
+
+## ⚠️ Important: Integration Required
+
+**This extension currently defines hooks but they are NOT integrated with PostgreSQL's autovacuum system.** To make it functional, you need to either:
+
+1. **Patch PostgreSQL core** (see `INTEGRATION.md`)
+2. **Use alternative hook points** (see `INTEGRATION.md`)
+3. **Use SQL-level autovacuum controls** (recommended for production)
+
+## Overview
+
+The vacuum_frequency extension implements a hook-based system that allows you to:
+
+- Control when VACUUM should run through C-level hooks
+- Implement custom scheduling logic in C code
+- Adjust VACUUM parameters based on table characteristics
+- Set VACUUM priorities for different tables
+- Monitor VACUUM activity through post-scan hooks
+
+This extension is designed for developers who want to write custom C functions to control VACUUM behavior rather than using SQL-level configuration.
+
+## Current Status
+
+The extension provides:
+- ✅ Hook function definitions and types
+- ✅ Example C functions for custom VACUUM logic
+- ✅ Shared memory management for settings
+- ✅ GUC configuration variables
+- ❌ **Integration with PostgreSQL's autovacuum system**
+
+## Installation
+
+1. Build and install the extension:
+   ```bash
+   make install
+   ```
+
+2. Add to shared_preload_libraries in postgresql.conf:
+   ```
+   shared_preload_libraries = 'vacuum_frequency'
+   ```
+
+3. Restart PostgreSQL
+
+4. Create the extension in your database:
+   ```sql
+   CREATE EXTENSION vacuum_frequency;
+   ```
+
+**Note**: The extension will load but the hooks will not be called by autovacuum until you integrate them with PostgreSQL core.
+
+## Architecture
+
+The extension implements four main hooks:
+
+1. **vacuum_should_vacuum_hook**: Controls whether VACUUM should run
+2. **vacuum_adjust_params_hook**: Adjusts VACUUM parameters
+3. **vacuum_get_priority_hook**: Sets VACUUM priority
+4. **vacuum_post_scan_hook**: Records VACUUM results
+
+## Configuration
+
+Global Settings (GUC variables):
+
+- `vacuum_frequency.default_interval_hours` (default: 24)
+  - Default VACUUM interval in hours
+
+- `vacuum_frequency.high_activity_threshold` (default: 10000)
+  - High activity threshold for dead tuples
+
+- `vacuum_frequency.low_activity_threshold` (default: 100)
+  - Low activity threshold for dead tuples
+
+- `vacuum_frequency.enable_time_based_scheduling` (default: true)
+  - Enable time-based VACUUM scheduling
+
+- `vacuum_frequency.enable_activity_based_scheduling` (default: true)
+  - Enable activity-based VACUUM scheduling
+
+- `vacuum_frequency.enable_workload_based_scheduling` (default: false)
+  - Enable workload-based VACUUM scheduling
+
+- `vacuum_frequency.peak_hours_start` (default: 9)
+  - Start hour for peak workload period
+
+- `vacuum_frequency.peak_hours_end` (default: 17)
+  - End hour for peak workload period
+
+## Customization
+
+To customize VACUUM behavior, modify the C functions in `vacuum_frequency.c`:
+
+1. **Time-based scheduling**: Modify `should_vacuum_by_time()`
+2. **Activity-based scheduling**: Modify `should_vacuum_by_activity()`
+3. **Workload-based scheduling**: Modify `should_vacuum_by_workload()`
+4. **Priority calculation**: Modify `vacuum_frequency_get_priority()`
+5. **Parameter adjustment**: Modify `vacuum_frequency_adjust_params()`
+
+## Example Customizations
+
+The `examples/custom_vacuum_logic.c` file shows practical examples:
+
+- **Weekend-only VACUUM**: Only run VACUUM on weekends
+- **Percentage-based scheduling**: VACUUM when dead tuples exceed 5%
+- **Business hours deferral**: Defer VACUUM during business hours
+- **Priority for critical tables**: Higher priority for important tables
+- **Aggressive VACUUM for log tables**: More aggressive parameters for high-turnover tables
+
+## Integration Options
+
+### Option 1: PostgreSQL Core Patch (Full Control)
+Apply the patch in `autovacuum_hooks_patch.diff` to integrate hooks with autovacuum.
+
+### Option 2: Alternative Hook Points
+Use existing PostgreSQL hooks like ProcessUtility or ObjectAccess hooks.
+
+### Option 3: SQL-Level Control (Recommended for Production)
+Use PostgreSQL's built-in autovacuum controls:
+```sql
+ALTER TABLE my_table SET (autovacuum_enabled = false);
+ALTER TABLE my_table SET (autovacuum_vacuum_threshold = 1000);
+```
+
+See `INTEGRATION.md` for detailed instructions on each approach.
+
+## Limitations
+
+- **Requires PostgreSQL core modification** for full autovacuum integration
+- **Not suitable for managed databases** without core access
+- **Performance overhead** from hook calls
+- **Version compatibility** issues with PostgreSQL updates
+
+## Development
+
+To extend this extension:
+
+1. Modify the hook functions in `vacuum_frequency.c`
+2. Add new GUC variables for configuration
+3. Implement custom logic in the helper functions
+4. Choose an integration approach from `INTEGRATION.md`
+5. Rebuild and reinstall the extension
+
+## Testing
+
+Test the extension (after integration):
+
+```sql
+-- Enable debug logging
+SET log_statement = 'all';
+
+-- Create test table
+CREATE TABLE test_vacuum_frequency (id serial, data text);
+
+-- Generate dead tuples
+INSERT INTO test_vacuum_frequency (data) VALUES ('test');
+UPDATE test_vacuum_frequency SET data = 'updated';
+
+-- Check logs for hook activity
+```
+
+## Files
+
+- `vacuum_frequency.c` - Main extension code with hook implementations
+- `vacuum_frequency.h` - Hook function types and declarations
+- `examples/custom_vacuum_logic.c` - Example customizations
+- `autovacuum_hooks_patch.diff` - Patch for PostgreSQL core integration
+- `INTEGRATION.md` - Detailed integration instructions
+
+## Author
+
+This extension demonstrates how to create custom VACUUM scheduling logic
+using PostgreSQL's extension framework and hook system. 

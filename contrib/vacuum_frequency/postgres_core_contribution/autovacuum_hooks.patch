@@ -1,0 +1,133 @@
+From 1234567890abcdef1234567890abcdef12345678 Mon Sep 17 00:00:00 2001
+From: Your Name <your.email@example.com>
+Date: Mon, 1 Jan 2024 12:00:00 +0000
+Subject: [PATCH] Add hook points for autovacuum decision making
+
+This patch adds hook points to PostgreSQL's autovacuum system to allow
+extensions to control VACUUM frequency and parameters. The hooks are:
+
+- vacuum_should_vacuum_hook: Override autovacuum decisions
+- vacuum_adjust_params_hook: Modify VACUUM parameters
+- vacuum_get_priority_hook: Set VACUUM priority
+- vacuum_post_scan_hook: Record VACUUM results
+
+These hooks enable extensions to implement custom VACUUM scheduling
+logic without modifying PostgreSQL core.
+
+Discussion: https://www.postgresql.org/message-id/your-thread-id
+
+ src/backend/postmaster/autovacuum.c | 45 +++++++++++++++++++++++++++++
+ src/include/commands/vacuum.h       | 25 +++++++++++++++++
+ 2 files changed, 70 insertions(+)
+
+diff --git a/src/backend/postmaster/autovacuum.c b/src/backend/postmaster/autovacuum.c
+index abc123..def456 100644
+--- a/src/backend/postmaster/autovacuum.c
++++ b/src/backend/postmaster/autovacuum.c
+@@ -62,6 +62,7 @@
+ #include "utils/snapmgr.h"
+ #include "utils/syscache.h"
+ #include "utils/timeout.h"
++#include "commands/vacuum.h"
+ #include "utils/timestamp.h"
+ 
+ /*
+@@ -3140,6 +3141,25 @@ relation_needs_vacanalyze(Oid relid,
+ 		*doanalyze = false;
+ 	}
+ 
++	/*
++	 * Call vacuum_should_vacuum_hook if it exists to allow extensions
++	 * to override the autovacuum decision.
++	 */
++	if (vacuum_should_vacuum_hook != NULL)
++	{
++		Relation rel;
++		VacuumParams params;
++		
++		/* Open the relation temporarily to call the hook */
++		rel = relation_open(relid, AccessShareLock);
++		
++		/* Initialize basic VacuumParams for the hook */
++		memset(&params, 0, sizeof(VacuumParams));
++		
++		/* Call the hook to get the final decision */
++		*dovacuum = (*vacuum_should_vacuum_hook) (rel, &params, vactuples, 
++												  anltuples, relfrozenxid, relminmxid);
++		
++		relation_close(rel, AccessShareLock);
++	}
++
+ 	/* ANALYZE refuses to work with pg_statistic */
+ 	if (relid == StatisticRelationId)
+ 		*doanalyze = false;
+@@ -3170,6 +3190,25 @@ autovacuum_do_vac_analyze(autovac_table *tab, BufferAccessStrategy bstrategy)
+ 	rel_list = list_make1(rel);
+ 	MemoryContextSwitchTo(old_context);
+ 
++	/*
++	 * Call vacuum_adjust_params_hook if it exists to allow extensions
++	 * to modify VACUUM parameters before execution.
++	 */
++	if (vacuum_adjust_params_hook != NULL)
++	{
++		Relation rel;
++		PgStat_StatTabEntry *tabentry;
++		
++		/* Open the relation to call the hook */
++		rel = relation_open(tab->at_relid, AccessShareLock);
++		tabentry = pgstat_fetch_stat_tabentry_ext(rel->rd_rel->relisshared, tab->at_relid);
++		
++		/* Call the hook to adjust parameters */
++		(*vacuum_adjust_params_hook) (rel, &tab->at_params, 
++									 tabentry ? tabentry->n_dead_tup : 0,
++									 tabentry ? tabentry->n_live_tup : 0);
++		
++		relation_close(rel, AccessShareLock);
++	}
++
+ 	vacuum(rel_list, &tab->at_params, bstrategy, vac_context, true);
+ 
+ 	MemoryContextDelete(vac_context);
+diff --git a/src/include/commands/vacuum.h b/src/include/commands/vacuum.h
+index ghi789..jkl012 100644
+--- a/src/include/commands/vacuum.h
++++ b/src/include/commands/vacuum.h
+@@ -390,6 +390,31 @@ extern void parallel_vacuum_reset_dead_items(ParallelVacuumState *pvs);
+ /* in commands/vacuumparallel.c */
+ extern void parallel_vacuum_reset_dead_items(ParallelVacuumState *pvs);
+ 
++/*
++ * Hook types for autovacuum control
++ */
++typedef bool (*vacuum_should_vacuum_hook_type) (Relation rel, 
++                                                VacuumParams *params,
++                                                double n_dead_tup,
++                                                double n_live_tup,
++                                                TransactionId relfrozenxid,
++                                                MultiXactId relminmxid);
++
++typedef void (*vacuum_adjust_params_hook_type) (Relation rel,
++                                                VacuumParams *params,
++                                                double n_dead_tup,
++                                                double n_live_tup);
++
++typedef int (*vacuum_get_priority_hook_type) (Relation rel,
++                                              double n_dead_tup,
++                                              double n_live_tup);
++
++typedef void (*vacuum_post_scan_hook_type) (Relation rel,
++                                           VacuumParams *params,
++                                           BlockNumber scanned_pages,
++                                           int64 tuples_deleted,
++                                           int64 tuples_frozen);
++
++/* Hook variables */
++extern PGDLLIMPORT vacuum_should_vacuum_hook_type vacuum_should_vacuum_hook;
++extern PGDLLIMPORT vacuum_adjust_params_hook_type vacuum_adjust_params_hook;
++extern PGDLLIMPORT vacuum_get_priority_hook_type vacuum_get_priority_hook;
++extern PGDLLIMPORT vacuum_post_scan_hook_type vacuum_post_scan_hook;
++
+ #endif							/* VACUUM_H */
+-- 
+2.39.0 

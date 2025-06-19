@@ -1,0 +1,5 @@
+# vacuum_frequency extension
+comment = 'Control VACUUM frequency with custom scheduling logic'
+default_version = '1.0'
+module_pathname = '$libdir/vacuum_frequency'
+relocatable = true 

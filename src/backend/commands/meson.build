@@ -51,6 +51,7 @@ backend_sources += files(
   'user.c',
   'vacuum.c',
   'vacuumparallel.c',
+  'vacuum_hooks.c',
   'variable.c',
   'view.c',
 )

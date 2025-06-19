@@ -407,4 +407,35 @@ extern double anl_random_fract(void);
 extern double anl_init_selection_state(int n);
 extern double anl_get_next_S(double t, int n, double *stateptr);
 
+/*
+ * Hook types for autovacuum control
+ */
+typedef bool (*vacuum_should_vacuum_hook_type) (Relation rel, 
+                                                VacuumParams *params,
+                                                double n_dead_tup,
+                                                double n_live_tup,
+                                                TransactionId relfrozenxid,
+                                                MultiXactId relminmxid);
+
+typedef void (*vacuum_adjust_params_hook_type) (Relation rel,
+                                                VacuumParams *params,
+                                                double n_dead_tup,
+                                                double n_live_tup);
+
+typedef int (*vacuum_get_priority_hook_type) (Relation rel,
+                                              double n_dead_tup,
+                                              double n_live_tup);
+
+typedef void (*vacuum_post_scan_hook_type) (Relation rel,
+                                           VacuumParams *params,
+                                           BlockNumber scanned_pages,
+                                           int64 tuples_deleted,
+                                           int64 tuples_frozen);
+
+/* Hook variables */
+extern PGDLLIMPORT vacuum_should_vacuum_hook_type vacuum_should_vacuum_hook;
+extern PGDLLIMPORT vacuum_adjust_params_hook_type vacuum_adjust_params_hook;
+extern PGDLLIMPORT vacuum_get_priority_hook_type vacuum_get_priority_hook;
+extern PGDLLIMPORT vacuum_post_scan_hook_type vacuum_post_scan_hook;
+
 #endif							/* VACUUM_H */
