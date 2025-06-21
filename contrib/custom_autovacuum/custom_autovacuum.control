@@ -1,0 +1,5 @@
+# custom_autovacuum extension
+comment = 'Custom autovacuum policy framework'
+default_version = '1.0'
+module_pathname = '$libdir/custom_autovacuum'
+relocatable = true 
