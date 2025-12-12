@@ -9596,6 +9596,16 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 					n->missing_ok = false;
 					$$ = (Node *) n;
 				}
+			| ALTER OPERATOR operator_with_argtypes RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+
+					n->renameType = OBJECT_OPERATOR;
+					n->object = (Node *) $3;
+					n->newname = $6;
+					n->missing_ok = false;
+					$$ = (Node *) n;
+				}
 			| ALTER OPERATOR CLASS any_name USING name RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);

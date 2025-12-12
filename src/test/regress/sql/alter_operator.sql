@@ -207,6 +207,54 @@ SELECT oprcanmerge, oprcanhash,
   AND oprleft = 'boolean'::regtype AND oprright = 'real'::regtype;
 
 --
+-- Test ALTER OPERATOR RENAME TO
+--
+
+CREATE OPERATOR @@@ (
+    LEFTARG = boolean,
+    RIGHTARG = boolean,
+    PROCEDURE = alter_op_test_fn
+);
+
+-- Rename operator
+ALTER OPERATOR @@@ (boolean, boolean) RENAME TO @@@@;
+
+-- Verify the rename worked
+SELECT oprname FROM pg_operator WHERE oprname = '@@@@'
+  AND oprleft = 'boolean'::regtype AND oprright = 'boolean'::regtype;
+
+-- Try to rename to an existing operator name (should fail)
+ALTER OPERATOR @@@@ (boolean, boolean) RENAME TO =;
+
+-- Rename back
+ALTER OPERATOR @@@@ (boolean, boolean) RENAME TO @@@;
+
+-- Test renaming operator with commutator and negator
+CREATE OPERATOR @@@@ (
+    LEFTARG = boolean,
+    RIGHTARG = real,
+    PROCEDURE = alter_op_test_fn_bool_real
+);
+
+CREATE OPERATOR @@@@@ (
+    LEFTARG = real,
+    RIGHTARG = boolean,
+    PROCEDURE = alter_op_test_fn_real_bool
+);
+
+ALTER OPERATOR @@@@ (boolean, real) SET (COMMUTATOR = @@@@@);
+
+-- Rename should work even with commutator set
+ALTER OPERATOR @@@@ (boolean, real) RENAME TO @@@@@@;
+
+-- Verify commutator relationship is preserved
+SELECT op.oprname AS operator_name, com.oprname AS commutator_name
+  FROM pg_operator op
+  INNER JOIN pg_operator com ON (op.oid = com.oprcom AND op.oprcom = com.oid)
+  WHERE op.oprname = '@@@@@@'
+  AND op.oprleft = 'boolean'::regtype AND op.oprright = 'real'::regtype;
+
+--
 -- Clean up
 --
 
@@ -218,6 +266,9 @@ DROP OPERATOR ==== (real, boolean);
 DROP OPERATOR !==== (boolean, real);
 DROP OPERATOR @= (real, boolean);
 DROP OPERATOR @!= (boolean, real);
+DROP OPERATOR @@@ (boolean, boolean);
+DROP OPERATOR @@@@@@ (boolean, real);
+DROP OPERATOR @@@@@ (real, boolean);
 
 DROP FUNCTION customcontsel(internal, oid, internal, integer);
 DROP FUNCTION alter_op_test_fn(boolean, boolean);
