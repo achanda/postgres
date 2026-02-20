@@ -25,7 +25,6 @@ typedef enum
 	AVW_BRINSummarizeRange,
 } AutoVacuumWorkItemType;
 
-
 /* GUC variables */
 extern PGDLLIMPORT bool autovacuum_start_daemon;
 extern PGDLLIMPORT int autovacuum_worker_slots;

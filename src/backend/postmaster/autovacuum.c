@@ -66,27 +66,36 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include "access/amapi.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/reloptions.h"
+#include "access/table.h"
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "access/xlog.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_class.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_namespace.h"
 #include "commands/vacuum.h"
 #include "common/int.h"
+#include "common/ip.h"
+#include "common/string.h"
 #include "lib/ilist.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
+#include "postmaster/fork_process.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
+#include "postmaster/startup.h"
 #include "storage/aio_subsys.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
@@ -94,22 +103,48 @@
 #include "storage/lmgr.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
+#include "storage/procarray.h"
 #include "storage/procsignal.h"
+#include "storage/shmem.h"
 #include "storage/smgr.h"
+#include "storage/spin.h"
 #include "tcop/tcopprot.h"
+#include "utils/array.h"
+#include "utils/builtins.h"
+#include "utils/datetime.h"
 #include "utils/fmgroids.h"
 #include "utils/fmgrprotos.h"
+#include "utils/guc.h"
 #include "utils/guc_hooks.h"
 #include "utils/injection_point.h"
+#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/pg_rusage.h"
 #include "utils/ps_status.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
+#include "custom_autovacuum.h"
 
+/*
+ * Default implementation of the custom autovacuum policy hook.
+ * This provides a fallback when the extension is not loaded.
+ */
+static CustomAutovacuumPolicyResult
+default_custom_autovacuum_policy_hook(CustomAutovacuumPolicyContext * context)
+{
+	CustomAutovacuumPolicyResult result = {0};
+
+	return result;
+}
+
+/*
+ * Hook variable - will be overridden by the extension if loaded
+ */
+PGDLLEXPORT custom_autovacuum_policy_hook_type custom_autovacuum_policy_hook = default_custom_autovacuum_policy_hook;
 
 /*
  * GUC parameters
@@ -150,6 +185,13 @@ int			Log_autoanalyze_min_duration = 600000;
  */
 static double av_storage_param_cost_delay = -1;
 static int	av_storage_param_cost_limit = -1;
+
+/* Custom autovacuum policy cost parameters - initialized to "invalid" values
+ * and will be set in do_autovacuum() after checking the custom policy hook
+ * in table_recheck_autovac().
+ */
+static double av_custom_vac_cost_delay = -1;
+static int	av_custom_vac_cost_limit = -1;
 
 /* Flags set by signal handlers */
 static volatile sig_atomic_t got_SIGUSR2 = false;
@@ -208,6 +250,10 @@ typedef struct autovac_table
 	char	   *at_relname;
 	char	   *at_nspname;
 	char	   *at_datname;
+	/* Custom autovacuum policy overrides */
+	double		at_custom_vac_cost_delay;
+	int			at_custom_vac_cost_limit;
+	bool		at_has_custom_cost_params;
 } autovac_table;
 
 /*-------------
@@ -1645,7 +1691,10 @@ VacuumUpdateCosts(void)
 {
 	if (MyWorkerInfo)
 	{
-		if (av_storage_param_cost_delay >= 0)
+		/* Check custom cost parameters first (highest priority) */
+		if (av_custom_vac_cost_delay >= 0)
+			vacuum_cost_delay = av_custom_vac_cost_delay;
+		else if (av_storage_param_cost_delay >= 0)
 			vacuum_cost_delay = av_storage_param_cost_delay;
 		else if (autovacuum_vac_cost_delay >= 0)
 			vacuum_cost_delay = autovacuum_vac_cost_delay;
@@ -1720,7 +1769,10 @@ AutoVacuumUpdateCostLimit(void)
 	 * zero is not a valid value.
 	 */
 
-	if (av_storage_param_cost_limit > 0)
+	/* Check custom cost limit first (highest priority) */
+	if (av_custom_vac_cost_limit > 0)
+		vacuum_cost_limit = av_custom_vac_cost_limit;
+	else if (av_storage_param_cost_limit > 0)
 		vacuum_cost_limit = av_storage_param_cost_limit;
 	else
 	{
@@ -2396,6 +2448,14 @@ do_autovacuum(void)
 		av_storage_param_cost_limit = tab->at_storage_param_vac_cost_limit;
 
 		/*
+		 * Save the custom cost parameter values from the custom autovacuum
+		 * policy hook for reference when updating vacuum_cost_delay and
+		 * vacuum_cost_limit during vacuuming this table.
+		 */
+		av_custom_vac_cost_delay = tab->at_custom_vac_cost_delay;
+		av_custom_vac_cost_limit = tab->at_custom_vac_cost_limit;
+
+		/*
 		 * We only expect this worker to ever set the flag, so don't bother
 		 * checking the return value. We shouldn't have to retry.
 		 */
@@ -2880,6 +2940,11 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 		tab->at_nspname = NULL;
 		tab->at_datname = NULL;
 
+		/* Store custom cost parameters from policy hook */
+		tab->at_custom_vac_cost_delay = av_custom_vac_cost_delay;
+		tab->at_custom_vac_cost_limit = av_custom_vac_cost_limit;
+		tab->at_has_custom_cost_params = (av_custom_vac_cost_limit > 0 || av_custom_vac_cost_delay >= 0);
+
 		/*
 		 * If any of the cost delay parameters has been set individually for
 		 * this table, disable the balancing algorithm.
@@ -2994,14 +3059,14 @@ relation_needs_vacanalyze(Oid relid,
 				anl_scale_factor;
 
 	/* thresholds calculated from above constants */
-	float4		vacthresh,
+	float4		vacthresh = 0,
 				vacinsthresh,
-				anlthresh;
+				anlthresh = 0;
 
 	/* number of vacuum (resp. analyze) tuples at this time */
-	float4		vactuples,
+	float4		vactuples = 0,
 				instuples,
-				anltuples;
+				anltuples = 0;
 
 	/* freeze parameters */
 	int			freeze_max_age;
@@ -3162,6 +3227,51 @@ relation_needs_vacanalyze(Oid relid,
 	/* ANALYZE refuses to work with pg_statistic */
 	if (relid == StatisticRelationId)
 		*doanalyze = false;
+
+	/* Call custom autovacuum policy hook if available */
+	if (custom_autovacuum_policy_hook != NULL)
+	{
+		CustomAutovacuumPolicyContext context = {0};
+		CustomAutovacuumPolicyResult result = {0};
+
+		/* Fill in the context structure */
+		context.relation_oid = relid;
+		context.database_oid = MyDatabaseId;
+		context.relation_name = NameStr(classForm->relname);
+		context.schema_name = get_namespace_name(classForm->relnamespace);
+		context.class_form = classForm;
+		context.stats = tabentry;
+		context.relopts = relopts;
+		context.force_vacuum = force_vacuum;
+		context.effective_multixact_freeze_max_age = effective_multixact_freeze_max_age;
+		context.vacthresh = vacthresh;
+		context.anlthresh = anlthresh;
+		context.vactuples = vactuples;
+		context.anltuples = anltuples;
+
+		/* Call the hook */
+		result = custom_autovacuum_policy_hook(&context);
+
+		/* Store custom cost parameters from the hook result */
+		av_custom_vac_cost_delay = result.custom_vac_cost_delay;
+		av_custom_vac_cost_limit = result.custom_vac_cost_limit;
+
+		/* Apply the result if the hook provided a decision */
+		if (result.skip_table)
+		{
+			*dovacuum = false;
+			*doanalyze = false;
+		}
+		else if (result.should_vacuum || result.should_analyze)
+		{
+			*dovacuum = result.should_vacuum;
+			*doanalyze = result.should_analyze;
+
+			/* Log the custom policy decision */
+			if (result.reason)
+				elog(DEBUG2, "Custom autovacuum policy: %s", result.reason);
+		}
+	}
 }
 
 /*
