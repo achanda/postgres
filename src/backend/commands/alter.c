@@ -134,6 +134,10 @@ report_namespace_conflict(Oid classId, const char *name, Oid nspOid)
 		case TSConfigRelationId:
 			msgfmt = gettext_noop("text search configuration \"%s\" already exists in schema \"%s\"");
 			break;
+		case OperatorRelationId:
+			Assert(OidIsValid(nspOid));
+			msgfmt = gettext_noop("operator \"%s\" already exists in schema \"%s\"");
+			break;
 		default:
 			elog(ERROR, "unsupported object class: %u", classId);
 			break;
@@ -284,6 +288,28 @@ AlterObjectRename_internal(Relation rel, Oid objectId, const char *new_name)
 		IsThereOpFamilyInNamespace(new_name, opf->opfmethod,
 								   opf->opfnamespace);
 	}
+	else if (classId == OperatorRelationId)
+	{
+		Form_pg_operator opr = (Form_pg_operator) GETSTRUCT(oldtup);
+		HeapTuple	opertup;
+
+		/* Check if operator with new name and same types already exists */
+		opertup = SearchSysCache4(OPERNAMENSP,
+								  CStringGetDatum(new_name),
+								  ObjectIdGetDatum(opr->oprleft),
+								  ObjectIdGetDatum(opr->oprright),
+								  ObjectIdGetDatum(opr->oprnamespace));
+		if (HeapTupleIsValid(opertup))
+		{
+			Oid			existingOid = ((Form_pg_operator) GETSTRUCT(opertup))->oid;
+
+			ReleaseSysCache(opertup);
+
+			/* If it's the same operator, that's fine (no-op rename) */
+			if (existingOid != objectId)
+				report_namespace_conflict(classId, new_name, opr->oprnamespace);
+		}
+	}
 	else if (classId == SubscriptionRelationId)
 	{
 		if (SearchSysCacheExists2(SUBSCRIPTIONNAME,
@@ -418,6 +444,7 @@ ExecRenameStmt(RenameStmt *stmt)
 		case OBJECT_FDW:
 		case OBJECT_FOREIGN_SERVER:
 		case OBJECT_FUNCTION:
+		case OBJECT_OPERATOR:
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
 		case OBJECT_LANGUAGE:

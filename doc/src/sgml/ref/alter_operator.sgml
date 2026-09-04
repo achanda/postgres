@@ -25,6 +25,9 @@ ALTER OPERATOR <replaceable>name</replaceable> ( { <replaceable>left_type</repla
     OWNER TO { <replaceable>new_owner</replaceable> | CURRENT_ROLE | CURRENT_USER | SESSION_USER }
 
 ALTER OPERATOR <replaceable>name</replaceable> ( { <replaceable>left_type</replaceable> | NONE } , <replaceable>right_type</replaceable> )
+    RENAME TO <replaceable>new_name</replaceable>
+
+ALTER OPERATOR <replaceable>name</replaceable> ( { <replaceable>left_type</replaceable> | NONE } , <replaceable>right_type</replaceable> )
     SET SCHEMA <replaceable>new_schema</replaceable>
 
 ALTER OPERATOR <replaceable>name</replaceable> ( { <replaceable>left_type</replaceable> | NONE } , <replaceable>right_type</replaceable> )
@@ -94,6 +97,15 @@ ALTER OPERATOR <replaceable>name</replaceable> ( { <replaceable>left_type</repla
     <listitem>
      <para>
       The new owner of the operator.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">new_name</replaceable></term>
+    <listitem>
+     <para>
+      The new name for the operator.
      </para>
     </listitem>
    </varlistentry>
@@ -190,6 +202,13 @@ ALTER OPERATOR <replaceable>name</replaceable> ( { <replaceable>left_type</repla
 
  <refsect1>
   <title>Examples</title>
+
+  <para>
+   Rename a custom operator <literal>a @@ b</literal> for type <type>text</type>:
+<programlisting>
+ALTER OPERATOR @@ (text, text) RENAME TO @@@;
+</programlisting>
+  </para>
 
   <para>
    Change the owner of a custom operator <literal>a @@ b</literal> for type <type>text</type>:
