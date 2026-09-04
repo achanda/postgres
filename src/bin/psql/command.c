@@ -2907,6 +2907,8 @@ exec_command_set(PsqlScanState scan_state, bool active_branch)
 			 */
 			char	   *newval;
 			char	   *opt;
+			char       *trimmed;
+			const char *query;
 
 			opt = psql_scan_slash_option(scan_state,
 										 OT_NORMAL, NULL, false);
@@ -2916,13 +2918,55 @@ exec_command_set(PsqlScanState scan_state, bool active_branch)
 			while ((opt = psql_scan_slash_option(scan_state,
 												 OT_NORMAL, NULL, false)))
 			{
-				newval = pg_realloc(newval, strlen(newval) + strlen(opt) + 1);
+				size_t oldlen = strlen(newval);
+				// +2 for space and null terminator
+				newval = pg_realloc(newval, oldlen + 1 + strlen(opt) + 1);
+				strcat(newval, " ");
 				strcat(newval, opt);
 				free(opt);
 			}
 
-			if (!SetVariable(pset.vars, opt0, newval))
-				success = false;
+			/* Support only \set var ~SQL for scalar assignment */
+
+			trimmed = newval;
+			while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+
+			if (*trimmed == '~')
+			{
+				query = trimmed + 1;
+				while (*query == ' ' || *query == '\t') query++;
+				if (!pset.db)
+				{
+					pg_log_error("\\set: not connected to a database");
+					success = false;
+				}
+				else
+				{
+					PGresult *res = PQexec(pset.db, query);
+					if (PQresultStatus(res) == PGRES_TUPLES_OK && PQntuples(res) == 1 && PQnfields(res) == 1)
+					{
+						const char *val = PQgetvalue(res, 0, 0);
+						if (!SetVariable(pset.vars, opt0, val))
+							success = false;
+					}
+					else if (PQresultStatus(res) != PGRES_TUPLES_OK)
+					{
+						pg_log_error("\\set: SQL execution failed: %s", PQerrorMessage(pset.db));
+						success = false;
+					}
+					else
+					{
+						pg_log_error("\\set: SQL did not return exactly one row and one column");
+						success = false;
+					}
+					PQclear(res);
+				}
+			}
+			else
+			{
+				if (!SetVariable(pset.vars, opt0, newval))
+					success = false;
+			}
 
 			pg_free(newval);
 		}
