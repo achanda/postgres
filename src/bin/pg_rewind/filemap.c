@@ -864,6 +864,20 @@ decide_file_action(file_entry_t *entry, XLogSegNo last_common_segno)
 			}
 			else if (entry->content_type != FILE_CONTENT_TYPE_RELATION)
 			{
+				/* Handle WAL segment file. */
+				const char	*fname;
+				char		*slash;
+
+				/* Split filepath into directory & filename. */
+				slash = strrchr(path, '/');
+				if (slash)
+					fname = slash + 1;
+				else
+					fname = path;
+
+				if (IsXLogFileName(fname))
+					return decide_wal_file_action(fname);
+
 				/*
 				 * It's a non-data file that we have no special processing
 				 * for. Copy it in toto.
